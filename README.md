@@ -35,4 +35,4 @@ Not for safety use.
 
 ## Deploy
 
-Vercel builds from the repo root using `vercel.json` (`npm run build -w apps/web`, output `apps/web/dist`).
+Vercel project root directory is `apps/web` with the Vite preset (npm installs the workspace from the repo root automatically).
