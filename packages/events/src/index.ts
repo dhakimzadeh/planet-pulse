@@ -29,4 +29,6 @@ export interface PulseEvent {
   label?: string;
   /** Source attribution, required for ODbL layers */
   source: string;
+  /** Optional type-specific details for captions (e.g. place, depthKm) */
+  meta?: Record<string, string | number>;
 }

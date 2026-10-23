@@ -18,7 +18,7 @@ export async function fetchEarthquakes(): Promise<PulseEvent[]> {
   return json.features
     .filter((f) => f.properties.mag !== null)
     .map((f) => {
-      const [lon, lat] = f.geometry.coordinates;
+      const [lon, lat, depth] = f.geometry.coordinates;
       const mag = f.properties.mag ?? 0;
       return {
         id: `earthquake:${f.id}`,
@@ -28,6 +28,7 @@ export async function fetchEarthquakes(): Promise<PulseEvent[]> {
         magnitude: mag,
         label: `M${mag.toFixed(1)} – ${f.properties.place ?? 'unknown location'}`,
         source: 'USGS',
+        meta: { place: f.properties.place ?? 'unknown location', depthKm: Math.round(depth ?? 0) },
       };
     });
 }

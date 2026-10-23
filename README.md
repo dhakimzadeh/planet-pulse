@@ -2,8 +2,12 @@
 
 A live, slowly rotating globe of the planet's activity, built as ambient art.
 
-**Phase 1 prototype:** web globe with live USGS earthquakes and adsb.lol flights, pulse effects, one mode.
-Gate: it looks good enough to leave running for an hour.
+**Phase 1 — Make it beautiful:** WebGL globe with live USGS earthquakes and adsb.lol flights, event cinema, a real day/night line and a first pass at generative sound.
+Gate: you leave it running for a day and still want it on.
+
+- **Event cinema:** a live quake at or above M5 dives the camera in, shows a caption, then drifts back to orbit. On load it also plays the day's largest quake (if M4.5+) once the intro replay finishes.
+- **Living light:** a dimmed Blue Marble day side, city lights on the night side, a soft twilight band; recomposited in a worker every 2 minutes.
+- **Sound:** off by default (browsers need a click). Quakes are sub-bass hits (small ones are pentatonic bells pitched by latitude), panned by longitude; flight density drives a slow pad.
 
 ## Layout
 
@@ -21,7 +25,9 @@ npm run dev        # http://localhost:5173
 npm run build
 ```
 
-URL params: `?lat=32.9&lon=-117.1` sets the starting view (flights are fetched around the view center).
+URL params: `?lat=32.9&lon=-117.1` sets the starting view (flights are fetched around the view center); `?cinema=4.5` lowers the dive threshold.
+
+Keys: `S` toggles sound, `C` replays the day's largest quake. Dragging the globe cancels a dive. The cursor and sound button hide after 4 s without mouse movement.
 
 ## Data and attribution
 
@@ -29,7 +35,7 @@ URL params: `?lat=32.9&lon=-117.1` sets the starting view (flights are fetched a
 | --- | --- | --- |
 | Earthquakes | USGS all_day GeoJSON | Public domain, polled every 60 s |
 | Flights | adsb.lol `/v2/point` | ODbL, attribution required; 250 nmi circle max; fetched from the browser to respect per-IP limits; contact them before production use |
-| Base imagery | NASA GIBS `VIIRS_CityLights_2012` | Public |
+| Base imagery | NASA GIBS `BlueMarble_ShadedRelief_Bathymetry` + `VIIRS_CityLights_2012` | Public |
 
 Not for safety use.
 

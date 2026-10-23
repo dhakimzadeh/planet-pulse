@@ -3,6 +3,9 @@ import { BitmapLayer, ScatterplotLayer, SolidPolygonLayer } from '@deck.gl/layer
 import type { PulseEvent } from '@planet-pulse/events';
 import { fetchEarthquakes } from './data/earthquakes';
 import { fetchFlights, projectFlight, type Flight } from './data/flights';
+import { startBasemap } from './basemap';
+import { Cinema, ORBIT_LATITUDE } from './cinema';
+import { SoundEngine } from './sound';
 import './style.css';
 
 // ---------- tuning ----------
@@ -16,18 +19,20 @@ const INTRO_SPREAD_MS = 40_000; // ...spread over the first 40 s
 const QUAKE_COLOR: [number, number, number] = [255, 160, 80];
 const FLIGHT_COLOR: [number, number, number] = [140, 210, 255];
 
-// NASA GIBS city lights, whole world as one equirectangular image (CORS-enabled).
-const BASE_IMAGE =
-  'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0' +
-  '&LAYERS=VIIRS_CityLights_2012&STYLES=&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=4096&HEIGHT=2048&FORMAT=image/jpeg';
-
 // ---------- state ----------
 const params = new URLSearchParams(location.search);
+// Live quakes at or above this magnitude get the camera dive (?cinema=4.5 to see more of them).
+const CINEMA_MIN_MAG = Number(params.get('cinema') ?? 5);
+// On load, after the intro, dive to the day's largest quake if it's at least this big.
+const WELCOME_MIN_MAG = Math.min(CINEMA_MIN_MAG, 4.5);
+
 let viewState = {
   longitude: Number(params.get('lon') ?? -100),
-  latitude: Number(params.get('lat') ?? 22),
+  latitude: Number(params.get('lat') ?? ORBIT_LATITUDE),
   zoom: fitZoom(),
 };
+let baseImage: ImageBitmap | string = '';
+let basemapStatus = '';
 let lastInteraction = -Infinity;
 let interacting = false;
 
@@ -37,6 +42,9 @@ interface Pulse {
   position: [number, number];
   magnitude: number;
   start: number;
+  /** Visual-only pulses (cinema heartbeats) skip the sound. */
+  silent?: boolean;
+  sounded?: boolean;
 }
 let pulses: Pulse[] = [];
 
@@ -63,6 +71,7 @@ const deck = new Deck({
   },
   onInteractionStateChange: (s) => {
     interacting = Boolean(s.isDragging || s.isZooming || s.isPanning || s.isRotating);
+    if (interacting) cinema.cancel();
     lastInteraction = performance.now();
   },
   parameters: { clearColor: [3 / 255, 5 / 255, 9 / 255, 1] } as never,
@@ -70,8 +79,83 @@ const deck = new Deck({
 });
 
 addEventListener('resize', () => {
-  viewState = { ...viewState, zoom: fitZoom() };
+  if (!cinema.active) viewState = { ...viewState, zoom: fitZoom() };
 });
+
+startBasemap(
+  (img) => (baseImage = img),
+  (s) => (basemapStatus = s),
+);
+
+// ---------- sound ----------
+const sound = new SoundEngine();
+const soundBtn = document.getElementById('sound') as HTMLButtonElement;
+async function toggleSound() {
+  if (sound.enabled) sound.disable();
+  else await sound.enable();
+  sound.setFlightDensity(flights.filter((f) => f.alt > 0).length);
+  soundBtn.textContent = sound.enabled ? 'Sound on' : 'Sound off';
+  soundBtn.classList.toggle('on', sound.enabled);
+}
+soundBtn.addEventListener('click', toggleSound);
+
+function panFor(lon: number) {
+  const dLon = (((lon - viewState.longitude + 540) % 360) - 180) * (Math.PI / 180);
+  return Math.sin(dLon);
+}
+
+// ---------- event cinema ----------
+const captionEl = document.getElementById('caption') as HTMLDivElement;
+let captionFor: string | null = null;
+const cinema = new Cinema(fitZoom, {
+  caption(e) {
+    const id = e?.id ?? null;
+    if (id === captionFor) return;
+    captionFor = id;
+    if (!e) {
+      captionEl.classList.remove('show');
+      return;
+    }
+    const mins = Math.max(1, Math.round((Date.now() - e.time) / 60_000));
+    const ago = mins < 90 ? `${mins} min ago` : `${Math.round(mins / 60)} h ago`;
+    captionEl.innerHTML =
+      `<div class="mag">M${e.magnitude.toFixed(1)}</div>` +
+      `<div class="place">${escapeHtml(String(e.meta?.place ?? e.label ?? ''))}</div>` +
+      `<div class="meta">${ago}${e.meta?.depthKm != null ? ` · ${e.meta.depthKm} km deep` : ''}</div>`;
+    captionEl.classList.add('show');
+  },
+  arrive(e) {
+    sound.cinema(e.magnitude);
+    pulses.push({ position: e.position as [number, number], magnitude: e.magnitude + 0.8, start: Date.now(), silent: true });
+  },
+  heartbeat(e) {
+    pulses.push({ position: e.position as [number, number], magnitude: e.magnitude, start: Date.now(), silent: true });
+  },
+});
+
+function largestQuake(withinMs: number) {
+  const now = Date.now();
+  return quakes
+    .filter((q) => now - q.time < withinMs)
+    .reduce<PulseEvent | null>((m, q) => (!m || q.magnitude > m.magnitude ? q : m), null);
+}
+
+addEventListener('keydown', (e: KeyboardEvent) => {
+  if (e.key === 's' || e.key === 'S') toggleSound();
+  if (e.key === 'c' || e.key === 'C') {
+    const big = largestQuake(24 * 3600_000);
+    if (big) cinema.trigger(big);
+  }
+});
+
+// Ambient display: hide the cursor and controls when the mouse is idle.
+let idleTimer = 0;
+addEventListener('pointermove', () => {
+  document.body.classList.remove('idle');
+  clearTimeout(idleTimer);
+  idleTimer = window.setTimeout(() => document.body.classList.add('idle'), 4000);
+});
+document.body.classList.add('idle');
 
 // ---------- data loops ----------
 async function pollQuakes(first = false) {
@@ -83,6 +167,10 @@ async function pollQuakes(first = false) {
     quakes = list;
 
     if (first) {
+      setTimeout(() => {
+        const big = largestQuake(24 * 3600_000);
+        if (big && big.magnitude >= WELCOME_MIN_MAG) cinema.trigger(big);
+      }, INTRO_SPREAD_MS + 5000);
       // Intro: replay recent quakes in time order so the globe wakes up.
       const recent = fresh.filter((q) => now - q.time < INTRO_WINDOW_MS).sort((a, b) => a.time - b.time);
       recent.forEach((q, i) => {
@@ -94,6 +182,12 @@ async function pollQuakes(first = false) {
       });
     } else {
       fresh.forEach((q) => pulses.push({ position: q.position as [number, number], magnitude: q.magnitude, start: now }));
+      // Only quakes that happened recently are "live" — USGS also back-fills older ones.
+      fresh
+        .filter((q) => q.magnitude >= CINEMA_MIN_MAG && now - q.time < 30 * 60_000)
+        .sort((a, b) => b.magnitude - a.magnitude)
+        .slice(0, 1)
+        .forEach((q) => cinema.trigger(q));
     }
     quakeStatus = '';
   } catch (e) {
@@ -102,10 +196,12 @@ async function pollQuakes(first = false) {
 }
 
 async function pollFlights() {
+  if (cinema.active) return; // don't re-center flights mid-dive
   const center: [number, number] = [viewState.longitude, viewState.latitude];
   try {
     flights = await fetchFlights(center[1], center[0]);
     flightCenter = center;
+    sound.setFlightDensity(flights.filter((f) => f.alt > 0).length);
     flightStatus = '';
   } catch (e) {
     // A TypeError here usually means the browser blocked the request (CORS / network).
@@ -133,12 +229,21 @@ function frame(t: number) {
   lastFrame = t;
   const now = Date.now();
 
-  if (!interacting && t - lastInteraction > RESUME_ROTATION_AFTER_MS) {
+  const shot = interacting ? null : cinema.update(t, viewState);
+  if (shot) {
+    viewState = { ...viewState, ...shot };
+    lastInteraction = -Infinity; // resume rotation as soon as the camera is back in orbit
+  } else if (!interacting && t - lastInteraction > RESUME_ROTATION_AFTER_MS) {
     viewState = { ...viewState, longitude: ((viewState.longitude + ROTATION_DEG_PER_SEC * dt + 540) % 360) - 180 };
   }
 
   pulses = pulses.filter((p) => now - p.start < pulseDuration(p.magnitude));
   const activePulses = pulses.filter((p) => now >= p.start);
+  for (const p of activePulses) {
+    if (p.sounded || p.silent) continue;
+    p.sounded = true;
+    sound.quake(p.magnitude, panFor(p.position[0]), p.position[1]);
+  }
 
   const layers = [
     new SolidPolygonLayer({
@@ -147,14 +252,16 @@ function frame(t: number) {
       getPolygon: (d) => d,
       getFillColor: [6, 10, 20],
     }),
-    new BitmapLayer({
-      id: 'base',
-      image: BASE_IMAGE,
-      bounds: [-180, -90, 180, 90],
-      _imageCoordinateSystem: COORDINATE_SYSTEM.LNGLAT,
-      tintColor: [150, 170, 210],
-      opacity: 0.9,
-    }),
+    !!baseImage &&
+      new BitmapLayer({
+        id: 'base',
+        image: baseImage,
+        bounds: [-180, -90, 180, 90],
+        _imageCoordinateSystem: COORDINATE_SYSTEM.LNGLAT,
+        // The plain city-lights fallback needs toning down; the day/night composite is pre-toned.
+        tintColor: typeof baseImage === 'string' ? [150, 170, 210] : [255, 255, 255],
+        opacity: typeof baseImage === 'string' ? 0.9 : 1,
+      }),
     new ScatterplotLayer<PulseEvent>({
       id: 'quake-dots',
       data: quakes,
@@ -221,6 +328,7 @@ function renderStats(now: number) {
     `<div class="flight">${airborne} aircraft aloft${where}</div>`,
     quakeStatus ? `<div class="status">${quakeStatus}</div>` : '',
     flightStatus ? `<div class="status">${flightStatus}</div>` : '',
+    basemapStatus ? `<div class="status">${basemapStatus}</div>` : '',
   ].join('');
 }
 
