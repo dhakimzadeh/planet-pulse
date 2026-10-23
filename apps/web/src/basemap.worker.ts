@@ -24,7 +24,7 @@ const BASE: [number, number, number] = [6, 10, 20]; // deep night ocean
 const DAY_BRIGHTNESS = 0.46;
 const DAY_SATURATION = 0.62;
 const LIGHTS_TINT: [number, number, number] = [0.95, 0.84, 0.62]; // pale sodium gold, quieter than quake orange
-const TWILIGHT_GLOW: [number, number, number] = [26, 16, 30];
+const TWILIGHT_GLOW: [number, number, number] = [16, 10, 18];
 
 let W = 0;
 let H = 0;
@@ -83,7 +83,7 @@ function render(sunLon: number, sunLat: number): ImageBitmap {
       const s = a + b * cosDL[x]; // sine of the sun's elevation
       const dayK = smooth(-0.07, 0.14, s);
       const nightK = 1 - smooth(-0.14, 0.02, s);
-      const glow = Math.exp(-(s * s) / 0.0036); // narrow band at the terminator
+      const glow = Math.exp(-(s * s) / 0.0018); // narrow band at the terminator
 
       let r = BASE[0] + TWILIGHT_GLOW[0] * glow;
       let g = BASE[1] + TWILIGHT_GLOW[1] * glow;
@@ -98,11 +98,14 @@ function render(sunLon: number, sunLat: number): ImageBitmap {
         bl += (lum + (db - lum) * DAY_SATURATION) * 1.08 * k;
       }
       if (lights && nightK > 0) {
-        const L = Math.max(lights[i], lights[i + 1], lights[i + 2]);
-        const v = L > 14 ? (L - 14) * 1.08 * nightK : 0; // drop sensor noise floor
-        r += v * LIGHTS_TINT[0];
-        g += v * LIGHTS_TINT[1];
-        bl += v * LIGHTS_TINT[2];
+        // The VIIRS image has a blue-tinted land/ocean base under white city lights:
+        // lights come from red+green, the leftover blue is a faint hint of the continents.
+        const rg = (lights[i] + lights[i + 1]) * 0.5;
+        const v = rg > 22 ? (rg - 22) * 1.12 * nightK : 0;
+        const land = Math.max(0, lights[i + 2] - rg - 24) * 0.16 * nightK;
+        r += v * LIGHTS_TINT[0] + land * 0.5;
+        g += v * LIGHTS_TINT[1] + land * 0.7;
+        bl += v * LIGHTS_TINT[2] + land;
       }
       o[i] = r;
       o[i + 1] = g;

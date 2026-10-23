@@ -16,6 +16,7 @@ const FLIGHT_POLL_MS = 15_000;
 const INTRO_WINDOW_MS = 3 * 3600_000; // on load, replay the last 3 h of quakes as pulses
 const INTRO_SPREAD_MS = 40_000; // ...spread over the first 40 s
 
+const EARTH_RADIUS_M = 6371008.8;
 const QUAKE_COLOR: [number, number, number] = [255, 160, 80];
 const FLIGHT_COLOR: [number, number, number] = [140, 210, 255];
 
@@ -277,7 +278,12 @@ function frame(t: number) {
     new ScatterplotLayer<Pulse>({
       id: 'quake-pulses',
       data: activePulses,
-      getPosition: (d) => d.position,
+      // Discs are flat; lift each by its sag (r²/2R) so the rim sits on the sphere instead of clipping into it.
+      getPosition: (d) => {
+        const k = (now - d.start) / pulseDuration(d.magnitude);
+        const r = pulseMaxRadius(d.magnitude) * (1 - Math.pow(1 - k, 3));
+        return [d.position[0], d.position[1], (r * r) / (2 * EARTH_RADIUS_M) + 1500];
+      },
       stroked: true,
       filled: true,
       radiusUnits: 'meters',
@@ -295,7 +301,7 @@ function frame(t: number) {
         const k = (now - d.start) / pulseDuration(d.magnitude);
         return [...QUAKE_COLOR, 60 * (1 - k) * (1 - k)] as [number, number, number, number];
       },
-      updateTriggers: { getRadius: now, getLineColor: now, getFillColor: now },
+      updateTriggers: { getPosition: now, getRadius: now, getLineColor: now, getFillColor: now },
     }),
     new ScatterplotLayer<Flight>({
       id: 'flights',
