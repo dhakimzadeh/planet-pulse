@@ -54,8 +54,8 @@ let quakeStatus = 'loading…';
 let flightStatus = 'loading…';
 
 function fitZoom() {
-  // Fill ~80% of the shorter screen side with the globe.
-  return Math.log2((Math.min(innerWidth, innerHeight) * 0.8) / 512) + 0.1;
+  // Fill ~80% of the shorter screen side with the globe (GlobeView: diameter ≈ 512·2^zoom / π px).
+  return Math.log2((Math.min(innerWidth, innerHeight) * 0.8 * Math.PI) / 512);
 }
 
 // ---------- deck ----------

@@ -1,8 +1,9 @@
 // adsb.lol: ODbL, attribution required. Queries are a circle of at most 250 nmi,
-// and the limit is per IP, so the browser calls it directly (never via a server).
-// Their docs ask production users to contact them first, and an API key will be
-// required in future.
-const API = 'https://api.adsb.lol/v2/point';
+// and the limit is per IP. Its API sends no CORS headers, so the web build goes
+// through a small edge-cached relay (api/flights.ts); native builds should call
+// adsb.lol directly. Their docs ask production users to contact them first, and
+// an API key will be required in future.
+const API = '/api/flights';
 export const MAX_RADIUS_NM = 250;
 
 export interface Flight {
@@ -32,8 +33,8 @@ interface AdsbAircraft {
 }
 
 export async function fetchFlights(lat: number, lon: number, radiusNm = MAX_RADIUS_NM): Promise<Flight[]> {
-  const url = `${API}/${lat.toFixed(3)}/${lon.toFixed(3)}/${Math.min(radiusNm, MAX_RADIUS_NM)}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const url = `${API}?lat=${lat.toFixed(1)}&lon=${lon.toFixed(1)}&r=${Math.min(radiusNm, MAX_RADIUS_NM)}`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`adsb.lol ${res.status}`);
   const json = (await res.json()) as { ac?: AdsbAircraft[]; now?: number };
   const now = json.now ?? Date.now();
